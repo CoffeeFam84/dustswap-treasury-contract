@@ -236,20 +236,20 @@ contract TreasuryManager is Ownable {
   mapping(address => uint256) public tier1;
   mapping(address => uint256) public tier2;
 
-  uint256 silver1_reward;
-  uint256 gold1_reward;
-  uint256 diamond1_reward;
-  uint256 silver2_reward;
-  uint256 gold2_reward;
-  uint256 diamond2_reward;
+  uint256 public silver1_reward;
+  uint256 public gold1_reward;
+  uint256 public diamond1_reward;
+  uint256 public silver2_reward;
+  uint256 public gold2_reward;
+  uint256 public diamond2_reward;
 
-  uint256 silver1_cnt;
-  uint256 gold1_cnt;
-  uint256 diamond1_cnt;
-  uint256 silver2_cnt;
-  uint256 silver2_ex_cnt;
-  uint256 gold2_cnt;
-  uint256 diamond2_cnt;
+  uint256 public silver1_cnt;
+  uint256 public gold1_cnt;
+  uint256 public diamond1_cnt;
+  uint256 public silver2_cnt;
+  uint256 public silver2_ex_cnt;
+  uint256 public gold2_cnt;
+  uint256 public diamond2_cnt;
 
   uint256 public constant DIAMOND_AMOUNT = 1_000_000000;
   uint256 public constant GOLD_AMOUNT = 500_000000;
@@ -258,8 +258,9 @@ contract TreasuryManager is Ownable {
   bool public dustingCycleOn;
   bool public dustingEventOn;
 
-  constructor(address _targetToken) {
+  constructor(address _targetToken, address _treasury) {
     targetToken = _targetToken;
+    treasury = _treasury;
   }
 
   function depositToken(address token, uint256 amount) external {
@@ -269,12 +270,14 @@ contract TreasuryManager is Ownable {
     //if it's new deposit at this round
     if (tier1[_msgSender()] < cycling_round * 10) {
       sharePerUser[_msgSender()] = value;
+      amountsOfTokenPerUser[_msgSender()][token] = amount;
     } else {
       uint256 tier = tier1[_msgSender()] % 10;
       if (tier == 1) silver1_cnt -= 1;
       else if (tier == 2) gold1_cnt -= 1;
       else if (tier == 3) diamond1_cnt -= 1;
       sharePerUser[_msgSender()] += value;
+      amountsOfTokenPerUser[_msgSender()][token] += amount;
     }
     if (sharePerUser[_msgSender()] > DIAMOND_AMOUNT) {
       tier2[_msgSender()] = 1 + 10 * event_round;
@@ -294,8 +297,12 @@ contract TreasuryManager is Ownable {
       tier1[_msgSender()] = 1 + 10 * cycling_round;
       silver1_cnt ++;
     }
-        
-    amountsOfTokenPerUser[_msgSender()][token] += amount;
+  }
+
+  function getInjectedAmount(address token, address user) public view returns (uint256) {
+    if (tier1[user] < cycling_round * 10)
+      return 0;
+    return amountsOfTokenPerUser[user][token];
   }
 
   function getQuantity(address outputToken, uint256 outputAmount, address anchorToken) public view returns (uint256) {
@@ -328,6 +335,11 @@ contract TreasuryManager is Ownable {
   }
       
   function depositETH() external payable onlyOwner {
+  }
+
+  function withdrawETH() external onlyOwner {
+    (bool success, ) = msg.sender.call{value: address(this).balance}("");
+    require(success, "Failed");
   }
   
   function setTier2Members(address[] calldata _silver, address[] calldata _gold, address[] calldata _diamond) external onlyOwner {
@@ -390,12 +402,12 @@ contract TreasuryManager is Ownable {
 
   function isTier2(address _user) public view returns (uint) {
     uint256 tier = 0;
-    uint256 tier1_base = event_round * 10;
-    if (tier1[_user] == tier1_base + 1) 
+    uint256 tier2_base = event_round * 10;
+    if (tier2[_user] == tier2_base + 1) 
       tier = 1;
-    else if (tier1[_user] == tier1_base + 2)
+    else if (tier2[_user] == tier2_base + 2)
       tier = 2;
-    else if (tier1[_user] == tier1_base + 3)
+    else if (tier2[_user] == tier2_base + 3)
       tier = 3;
     return tier;
   }
@@ -413,14 +425,15 @@ contract TreasuryManager is Ownable {
 
   function startDustingEvent() external onlyOwner {
     require(dustingCycleOn == false, "Event should off");
+    require(address(this).balance > 0, "No balance");
     dustingEventOn = true;
     uint256 totalBalance = address(this).balance;
-    silver1_reward = totalBalance * 10 / 100 / silver1_cnt;
-    gold1_reward = totalBalance * 20 / 100 / gold1_cnt;
-    diamond1_reward = totalBalance * 35 / 100 / diamond1_cnt;
-    silver2_reward = totalBalance * 5 / 100 / silver2_cnt;
-    gold2_reward = totalBalance * 10 / 100 / gold2_cnt;
-    diamond2_reward = totalBalance * 20 / 100 / diamond2_cnt;
+    silver1_reward = silver1_cnt > 0 ? totalBalance * 10 / 100 / silver1_cnt : 0;
+    gold1_reward = gold1_cnt > 0 ?totalBalance * 20 / 100 / gold1_cnt : 0;
+    diamond1_reward = diamond1_cnt > 0 ? totalBalance * 35 / 100 / diamond1_cnt : 0;
+    silver2_reward = silver2_cnt > 0 ? totalBalance * 5 / 100 / silver2_cnt : 0;
+    gold2_reward = gold2_cnt > 0 ? totalBalance * 10 / 100 / gold2_cnt : 0;
+    diamond2_reward = diamond2_cnt > 0 ? totalBalance * 20 / 100 / diamond2_cnt: 0;
   }
 
   function finishDustingEvent() external onlyOwner {
@@ -446,8 +459,16 @@ contract TreasuryManager is Ownable {
     return EnumerableSet.contains(_whitelist, _token);
   }
 
-  function getWhitelist(uint256 _index) public view returns (address){
+  function getWhitelist(uint256 _index) public view returns (address) {
     require(_index <= getWhitelistLength() - 1, "index out of bounds");
     return EnumerableSet.at(_whitelist, _index);
+  }
+
+  function setTreasuryAddress(address _treasury) external onlyOwner {
+    treasury = _treasury;
+  }
+
+  function setTargetToken(address _token) external onlyOwner {
+    targetToken = _token;
   }
 }
