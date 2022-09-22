@@ -225,6 +225,8 @@ contract TreasuryManager is Ownable {
   IUniswapV2Router02 public uniswapV2Router = IUniswapV2Router02(0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D);
   IUniswapV2Factory public uniswapV2Factory = IUniswapV2Factory(0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f);
 
+  IERC20 public dustToken = IERC20(0xf1e8aE68Bde73bAafc1dfaD22C13e19676C1Bfe6);
+
   // Calculate price based on USDC
   address public targetToken;
 
@@ -243,13 +245,10 @@ contract TreasuryManager is Ownable {
   uint256 public gold2_reward;
   uint256 public diamond2_reward;
 
-  uint256 public silver1_cnt;
-  uint256 public gold1_cnt;
-  uint256 public diamond1_cnt;
-  uint256 public silver2_cnt;
+  uint256[3] public tier1_cnt;
+  uint256[3] public tier2_cnt;
   uint256 public silver2_ex_cnt;
-  uint256 public gold2_cnt;
-  uint256 public diamond2_cnt;
+  mapping(address => bool) public silver2_ex;
 
   uint256 public constant DIAMOND_AMOUNT = 1_000_000000;
   uint256 public constant GOLD_AMOUNT = 500_000000;
@@ -273,9 +272,9 @@ contract TreasuryManager is Ownable {
       amountsOfTokenPerUser[_msgSender()][token] = amount;
     } else {
       uint256 tier = tier1[_msgSender()] % 10;
-      if (tier == 1) silver1_cnt -= 1;
-      else if (tier == 2) gold1_cnt -= 1;
-      else if (tier == 3) diamond1_cnt -= 1;
+      if (tier == 1) tier1_cnt[0] -= 1;
+      else if (tier == 2) tier1_cnt[1] -= 1;
+      else if (tier == 3) tier1_cnt[2] -= 1;
       sharePerUser[_msgSender()] += value;
       amountsOfTokenPerUser[_msgSender()][token] += amount;
     }
@@ -283,19 +282,20 @@ contract TreasuryManager is Ownable {
       tier2[_msgSender()] = 1 + 10 * event_round;
       tier1[_msgSender()] = 10 * cycling_round;
       silver2_ex_cnt ++;
-      silver2_cnt ++;
+      silver2_ex[_msgSender()] = true;
+      tier2_cnt[0] ++;
     }
     else if (sharePerUser[_msgSender()] > GOLD_AMOUNT) {
       tier1[_msgSender()] = 3 + 10 * cycling_round;
-      diamond1_cnt ++;
+      tier1_cnt[2] ++;
     }
     else if (sharePerUser[_msgSender()] > SILVER_AMOUNT) {
       tier1[_msgSender()] = 2 + 10 * cycling_round;
-      gold1_cnt ++;
+      tier1_cnt[1] ++;
     }
     else {
       tier1[_msgSender()] = 1 + 10 * cycling_round;
-      silver1_cnt ++;
+      tier1_cnt[0] ++;
     }
   }
 
@@ -348,15 +348,15 @@ contract TreasuryManager is Ownable {
     uint256 length = _silver.length;
     for (uint256 i = 0; i < length; i++)
       tier2[_silver[i]] = event_round * 10 + 1;
-    silver2_cnt = silver2_ex_cnt + length;
+    tier2_cnt[0] = silver2_ex_cnt + length;
     length = _gold.length;
     for (uint256 i = 0; i < length; i++)
       tier2[_gold[i]] = event_round * 10 + 2;
-    gold2_cnt = length;
+    tier2_cnt[1] = length;
     length = _diamond.length;
     for (uint256 i = 0; i < length; i++)
       tier2[_diamond[i]] = event_round * 10 + 3;
-    diamond2_cnt = length;
+    tier2_cnt[2] = length;
   }
 
   function claimReward() public {
@@ -403,7 +403,7 @@ contract TreasuryManager is Ownable {
   function isTier2(address _user) public view returns (uint) {
     uint256 tier = 0;
     uint256 tier2_base = event_round * 10;
-    if (tier2[_user] == tier2_base + 1) 
+    if (silver2_ex[_user] || tier2[_user] == tier2_base + 1) 
       tier = 1;
     else if (tier2[_user] == tier2_base + 2)
       tier = 2;
@@ -412,10 +412,33 @@ contract TreasuryManager is Ownable {
     return tier;
   }
 
+  function checkTier2(address _user) public {
+    require(dustingCycleOn, "Only available on dusting cycle");
+    uint256 oldTier = isTier2(_user);
+    if (oldTier > 0) {
+      tier2_cnt[oldTier-1] --;
+    }
+    uint256 dustTotalSupply = dustToken.totalSupply();
+    uint256 dustUserBalance = dustToken.balanceOf(_user);
+    uint256 newTier = 0;
+    if (dustUserBalance >= (dustTotalSupply * 2 / 100)) {
+      newTier = event_round * 10 + 3;
+    }
+    else if (dustUserBalance >= (dustTotalSupply / 100)) {
+      newTier = event_round * 10 + 2;
+    }
+    else if (dustUserBalance >= (dustTotalSupply / 200)) {
+      newTier = event_round * 10 + 1;
+    }
+    if (newTier > 0) {
+      tier2_cnt[newTier-1] ++;
+    }
+  }
+
   function startDustingCycle() external onlyOwner {
     require(dustingEventOn == false, "Event should off");
     dustingCycleOn = true;
-    silver1_cnt = gold1_cnt = diamond1_cnt = 0;
+    tier1_cnt[0] = tier1_cnt[1] = tier1_cnt[2] = 0;
     cycling_round += 1;
   }
 
@@ -428,12 +451,12 @@ contract TreasuryManager is Ownable {
     require(address(this).balance > 0, "No balance");
     dustingEventOn = true;
     uint256 totalBalance = address(this).balance;
-    silver1_reward = silver1_cnt > 0 ? totalBalance * 10 / 100 / silver1_cnt : 0;
-    gold1_reward = gold1_cnt > 0 ?totalBalance * 20 / 100 / gold1_cnt : 0;
-    diamond1_reward = diamond1_cnt > 0 ? totalBalance * 35 / 100 / diamond1_cnt : 0;
-    silver2_reward = silver2_cnt > 0 ? totalBalance * 5 / 100 / silver2_cnt : 0;
-    gold2_reward = gold2_cnt > 0 ? totalBalance * 10 / 100 / gold2_cnt : 0;
-    diamond2_reward = diamond2_cnt > 0 ? totalBalance * 20 / 100 / diamond2_cnt: 0;
+    silver1_reward = tier1_cnt[0] > 0 ? totalBalance * 10 / 100 / tier1_cnt[0] : 0;
+    gold1_reward = tier1_cnt[1] > 0 ?totalBalance * 20 / 100 / tier1_cnt[1] : 0;
+    diamond1_reward = tier1_cnt[2] > 0 ? totalBalance * 35 / 100 / tier1_cnt[2] : 0;
+    silver2_reward = tier2_cnt[0] > 0 ? totalBalance * 5 / 100 / tier2_cnt[0] : 0;
+    gold2_reward = tier2_cnt[1] > 0 ? totalBalance * 10 / 100 / tier2_cnt[1] : 0;
+    diamond2_reward = tier2_cnt[2] > 0 ? totalBalance * 20 / 100 / tier2_cnt[2] : 0;
   }
 
   function finishDustingEvent() external onlyOwner {
