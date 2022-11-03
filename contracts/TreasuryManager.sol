@@ -4,6 +4,7 @@ pragma solidity ^0.8.9;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/interfaces/IERC20.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
+import "@openzeppelin/contracts/proxy/utils/Initializable.sol";
 
 // pragma solidity >=0.5.0;
 interface IUniswapV2Pair {
@@ -211,7 +212,7 @@ interface IUniswapV2Factory {
     function setFeeToSetter(address) external;
 }
 
-contract TreasuryManager is Ownable {
+contract TreasuryManager is Ownable, Initializable {
 
   using EnumerableSet for EnumerableSet.AddressSet;
   EnumerableSet.AddressSet private _whitelist;
@@ -257,7 +258,7 @@ contract TreasuryManager is Ownable {
   bool public dustingCycleOn;
   bool public dustingEventOn;
 
-  constructor(address _targetToken, address _treasury) {
+  function initialize(address _targetToken, address _treasury) public initializer {
     targetToken = _targetToken;
     treasury = _treasury;
   }
@@ -272,18 +273,18 @@ contract TreasuryManager is Ownable {
       amountsOfTokenPerUser[_msgSender()][token] = amount;
     } else {
       uint256 tier = tier1[_msgSender()] % 10;
-      if (tier == 1) tier1_cnt[0] -= 1;
-      else if (tier == 2) tier1_cnt[1] -= 1;
-      else if (tier == 3) tier1_cnt[2] -= 1;
+      if (tier > 0) tier1_cnt[tier-1] -= 1;
       sharePerUser[_msgSender()] += value;
       amountsOfTokenPerUser[_msgSender()][token] += amount;
     }
     if (sharePerUser[_msgSender()] > DIAMOND_AMOUNT) {
-      tier2[_msgSender()] = 1 + 10 * event_round;
-      tier1[_msgSender()] = 10 * cycling_round;
-      silver2_ex_cnt ++;
-      silver2_ex[_msgSender()] = true;
-      tier2_cnt[0] ++;
+      if (silver2_ex[_msgSender()] == false) {
+        tier2[_msgSender()] = 1 + 10 * event_round;
+        tier1[_msgSender()] = 10 * cycling_round;
+        silver2_ex_cnt ++;
+        silver2_ex[_msgSender()] = true;
+        tier2_cnt[0] ++;
+      }
     }
     else if (sharePerUser[_msgSender()] > GOLD_AMOUNT) {
       tier1[_msgSender()] = 3 + 10 * cycling_round;
